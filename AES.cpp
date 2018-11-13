@@ -7,8 +7,8 @@
 #include <cstdlib> //for malloc and free
 
 /*
- * For all zero key and pt, should yield:
- * 66E94BD4EF8A2C3B884CFA59CA342B2E
+ * For test input and output values, see:
+ * https://csrc.nist.gov/csrc/media/publications/fips/197/final/documents/fips-197.pdf
  */
 
  /*
@@ -54,6 +54,20 @@ static const unsigned char rsbox[256] = {
 static const unsigned char Rcon[11] = {
         0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36 };
 
+static const int Nb = 4;
+
+
+#if (KEYLENGTH == 192)
+    static const int Nk = 6;
+    static const int Nr = 12;
+#elif (KEYLENGTH == 256)
+    static const int Nk = 8;
+    static const int Nr = 14;
+#else
+    static const int Nk = 4;
+    static const int Nr = 10;
+#endif
+
 /*
  * Private functions
  */
@@ -74,17 +88,17 @@ unsigned char gmul(unsigned char a, unsigned char b){
 }
 
 /*
- * Expands the key to the required length for 10 rounds
+ * Expands the key to the required length for Nr rounds
  */
 void expand_key(unsigned char key[], unsigned char* roundKeys){
 
-    //initialize the first four words
-    for(int i = 0;i < 16;i++){
+    //initialize the first words
+    for(int i = 0;i < (4*Nk);i++){
         roundKeys[i] = key[i];
     }
 
     //Main loop for expand key
-    for(int i = 4; i < 44;i++){
+    for(int i = Nk; i < (Nr + 1)*Nb;i++){
 
         //initialize temp
         unsigned char temp[4];
@@ -93,7 +107,7 @@ void expand_key(unsigned char key[], unsigned char* roundKeys){
             temp[j] = roundKeys[prevWord + j];
         }
 
-        if(i%4 == 0){
+        if(i%Nk == 0){
 
             //Rotword
             unsigned char first = temp[0];
@@ -104,13 +118,17 @@ void expand_key(unsigned char key[], unsigned char* roundKeys){
             for(int j = 0;j < 4; j++) temp[j] = sbox[temp[j]];
 
             //Rcon
-            temp[0] = temp[0] ^ Rcon[i/4];
+            temp[0] = temp[0] ^ Rcon[i/Nk];
+        }
+        else if(Nk > 6 && i%Nk == 4){
+            //SubWord for 256-bit key
+            for(int j = 0;j < 4; j++) temp[j] = sbox[temp[j]];
         }
 
-        int fourBehind = (i-4)*4;
+        int prev = (i-Nk)*4;
         int curr = i*4;
         for(int j = 0;j < 4;j++){
-            roundKeys[curr+j] = roundKeys[fourBehind+j] ^ temp[j];
+            roundKeys[curr+j] = roundKeys[prev+j] ^ temp[j];
         }
 
     }
@@ -119,7 +137,7 @@ void expand_key(unsigned char key[], unsigned char* roundKeys){
 void addRoundKey(unsigned char* ct, unsigned char* ek, int round){
     for(int i = 0;i < 4;i++){
         for(int j = 0;j < 4;j++) {
-            ct[j*4 + i] ^= ek[(round * 16) + (i*4) + j];
+            ct[j*4 + i] ^= ek[(round * Nb * 4) + (i*4) + j];
         }
     }
 
@@ -169,25 +187,25 @@ void mixColumns(unsigned char* ct){
 }
 
 /*
- * Public encrypt function for a single 128-bit block.  Takes in a 128-bit key and
+ * Public encrypt function for a single block.  Takes in a KEYLENGTH-bit key and
  * a block of plaintext and returns a pointer to a block of ciphertext allocated on
  * the heap.
  */
 unsigned char* encrypt(unsigned char pt[], unsigned char key[]){
     //set up ciphertext array and expand round key
-    unsigned char* state = (unsigned char*) malloc(16);
+    unsigned char* state = (unsigned char*) malloc(4*Nb);
 
     //Expand the key into round keys
-    unsigned char* roundKeys = (unsigned char*) malloc(176);
+    unsigned char* roundKeys = (unsigned char*) malloc(4*Nb*(Nr+1));
     expand_key(key, roundKeys);
 
-    /*
-    for(int i = 0;i < 176;i++){
-        printf("%02X", roundKeys[i]);
 
-    }
-    printf("\n");
-     */
+//    for(int i = 0;i < 4*Nb*(Nr+1);i++){
+//        printf("%02X", roundKeys[i]);
+//
+//    }
+//    printf("\n");
+
 
     //initialize the state array with the plaintext running column-wise
     for(int i = 0;i < 4;i++){
@@ -196,24 +214,24 @@ unsigned char* encrypt(unsigned char pt[], unsigned char key[]){
         }
     }
 
-    /*printf("Round 0: ");
-    for(int i = 0;i < 16;i++){
-        printf("%02X", state[i]);
-
-    }
-    printf("\n");*/
+//    printf("Round 0: ");
+//    for(int i = 0;i < 16;i++){
+//        printf("%02X", state[i]);
+//
+//    }
+//    printf("\n");
 
     //Zeroth round add key
     addRoundKey(state, roundKeys, 0);
 
     //9 rounds for 128-bit key
-    for(int i = 1;i <= 9;i++){
-        /*printf("Round %d: ", i);
-        for(int i = 0;i < 16;i++){
-            printf("%02X", state[i]);
-
-        }
-        printf("\n");*/
+    for(int i = 1;i <= Nr - 1;i++){
+//        printf("Round %d: ", i);
+//        for(int i = 0;i < 16;i++){
+//            printf("%02X", state[i]);
+//
+//        }
+//        printf("\n");
 
         substituteBytes(state);
         shiftRows(state);
@@ -221,17 +239,17 @@ unsigned char* encrypt(unsigned char pt[], unsigned char key[]){
         addRoundKey(state,roundKeys,i);
     }
 
-    /*printf("Round 10: ");
-    for(int i = 0;i < 16;i++){
-        printf("%02X", state[i]);
-
-    }
-    printf("\n");*/
+//    printf("Round 10: ");
+//    for(int i = 0;i < 16;i++){
+//        printf("%02X", state[i]);
+//
+//    }
+//    printf("\n");
 
     //Last round: remove Mix Columns
     substituteBytes(state);
     shiftRows(state);
-    addRoundKey(state,roundKeys,10);
+    addRoundKey(state,roundKeys,Nr);
 
     free(roundKeys);
 
